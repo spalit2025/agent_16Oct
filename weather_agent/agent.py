@@ -3,7 +3,29 @@ from google.adk.agents import SequentialAgent
 from google.adk.tools.google_search_tool import google_search
 import json
 from datetime import datetime
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models import LlmResponse, LlmRequest
+from google.genai import types
+import logging
+import google.cloud.logging
+cloud_logging_client = google.cloud.logging.Client()
+cloud_logging_client.setup_logging()
+
+
 import aiohttp
+def log_query_to_model(callback_context: CallbackContext, llm_request: LlmRequest):
+    if llm_request.contents and llm_request.contents[-1].role == 'user':
+        for part in llm_request.contents[-1].parts:
+            if part.text:
+                logging.info("[query to %s]: %s", callback_context.agent_name, part.text)
+
+def log_model_response(callback_context: CallbackContext, llm_response: LlmResponse):
+    if llm_response.content and llm_response.content.parts:
+        for part in llm_response.content.parts:
+            if part.text:
+                logging.info("[response from %s]: %s", callback_context.agent_name, part.text)
+            elif part.function_call:
+                logging.info("[function call from %s]: %s", callback_context.agent_name, part.function_call.name)
 
 
 async def get_weather(latitude: float, longitude: float) -> dict:
@@ -33,6 +55,8 @@ async def get_latitude_longitude(location: str):
 query_parser_agent = Agent(
     model='gemini-2.0-flash-exp',
     name='query_parser_agent',
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
     description='Parses weather readiness queries and extracts structured information including location, weather events, timeframes, and vulnerable populations.',
     instruction="""You are the Root Agent in a multi-agent weather readiness framework designed to support community decision-makers and emergency managers with actionable intelligence about weather threats.
 
@@ -148,6 +172,8 @@ After generating the JSON, confirm the parsed understanding and state which agen
 # Data Agent - Historical, Census, and Geospatial Data Retrieval
 data_agent = Agent(
     model='gemini-2.0-flash-exp',
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
     name='data_agent',
     description='Retrieves historical weather data, census demographics, and geospatial information from BigQuery and other data sources.',
     instruction="""You are the Data Agent in the weather readiness framework. Your role is to fetch and correlate historical weather data, census demographics, and geospatial information.
@@ -198,6 +224,8 @@ Return results in a structured format that can be used by the Forecast and Insig
 forecast_agent = Agent(
     model='gemini-2.0-flash-exp',
     name='forecast_agent',
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
     description='Fetches real-time weather conditions, forecasts, and active warnings from NWS API.',
     instruction="""You are the Forecast Agent. Your primary role is to help with mapping, directions, and finding places. If the user asks for the weather, use the latitude and longitude as 37.2882,-121.8492, and then delegate to the weather_agent to get the forecast.
 
@@ -211,6 +239,8 @@ tools=[ get_weather, get_latitude_longitude],
 insights_agent = Agent(
     model='gemini-2.0-flash-exp',
     name='insights_agent',
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
     description='Synthesizes historical data, forecasts, and community context to generate actionable threat assessments and preparedness recommendations.',
     instruction="""You are the Insights Agent in the weather readiness framework. Your role is to synthesize all collected data into actionable intelligence for decision-makers.
 
@@ -272,6 +302,8 @@ google_search_agent = Agent(
     description='A helpful assistant for user questions that require searching the web.',
     instruction="answer the user's question using the google search tool",
     tools=[google_search],
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
 )
 
 # Root Agent - Sequential Coordinator
@@ -284,5 +316,6 @@ root_agent = SequentialAgent(
         insights_agent,
         google_search_agent
     ],
-    description="Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats."
+    
+    description="You are a helpful assistant. Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats. Dont return intermediate response"
 )
