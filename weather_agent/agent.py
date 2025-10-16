@@ -6,7 +6,7 @@ from datetime import datetime
 
 # Root Agent - Query Parser & Coordinator
 query_parser_agent = Agent(
-    model='gemini-2.0-flash-exp',
+    model='gemini-2.5-flash',
     name='query_parser_agent',
     description='Parses weather readiness queries and extracts structured information including location, weather events, timeframes, and vulnerable populations.',
     instruction="""You are the Root Agent in a multi-agent weather readiness framework designed to support community decision-makers and emergency managers with actionable intelligence about weather threats.
@@ -116,13 +116,13 @@ Generate a JSON object with this structure:
   }
 }
 
-After generating the JSON, confirm the parsed understanding and state which agents will be invoked next.
+After generating the JSON, pass it to the data_agent. Do not show the JSON to the user.
 """
 )
 
 # Data Agent - Historical, Census, and Geospatial Data Retrieval
 data_agent = Agent(
-    model='gemini-2.0-flash-exp',
+    model='gemini-2.5-flash',
     name='data_agent',
     description='Retrieves historical weather data, census demographics, and geospatial information from BigQuery and other data sources.',
     instruction="""You are the Data Agent in the weather readiness framework. Your role is to fetch and correlate historical weather data, census demographics, and geospatial information.
@@ -165,13 +165,13 @@ Provide a summary of retrieved data including:
 - Infrastructure locations and capacity (if requested)
 - Data quality notes and any gaps
 
-Return results in a structured format that can be used by the Forecast and Insights Agents.
+Return results in a structured format that can be used by the Forecast and Insights Agents. Do not show the output to the user.
 """
 )
 
 # Forecast Agent - Real-time Weather Data
 forecast_agent = Agent(
-    model='gemini-2.0-flash-exp',
+    model='gemini-2.5-flash',
     name='forecast_agent',
     description='Fetches real-time weather conditions, forecasts, and active warnings from NWS and NOAA APIs.',
     instruction="""You are the Forecast Agent in the weather readiness framework. Your role is to retrieve current weather conditions, forecasts, and active alerts.
@@ -210,13 +210,14 @@ Provide:
 - Forecast confidence and uncertainty ranges
 - Expected impacts based on predicted conditions
 
-Return results in a structured format for the Insights Agent to synthesize.
-"""
+Return results in a structured format for the Insights Agent to synthesize. Do not show the output to the user.
+""",
+tools=[google_search],
 )
 
 # Insights Agent - Synthesis and Recommendations
 insights_agent = Agent(
-    model='gemini-2.0-flash-exp',
+    model='gemini-2.5-flash',
     name='insights_agent',
     description='Synthesizes historical data, forecasts, and community context to generate actionable threat assessments and preparedness recommendations.',
     instruction="""You are the Insights Agent in the weather readiness framework. Your role is to synthesize all collected data into actionable intelligence for decision-makers.
@@ -272,24 +273,25 @@ Use clear, actionable language. Focus on "what to do" and "when to do it" rather
 """
 )
 
-# Google Search Agent - for additional web-based information
-google_search_agent = Agent(
-    model='gemini-2.0-flash-exp',
-    name='google_search_agent',
-    description='A helpful assistant for user questions that require searching the web.',
-    instruction="answer the user's question using the google search tool",
-    tools=[google_search],
-)
-
 # Root Agent - Sequential Coordinator
-root_agent = SequentialAgent(
-    name="root_agent",
+weather_agent = SequentialAgent(
+    name="weather_agent",
     sub_agents=[
         query_parser_agent,
         data_agent,
         forecast_agent,
-        insights_agent,
-        google_search_agent
+        insights_agent
     ],
-    description="Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats."
+    description="Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats.",
+)
+
+# Root Agent - Sequential Coordinator
+root_agent = Agent(
+    name="root_agent",
+    model='gemini-2.5-flash',
+    sub_agents=[
+        weather_agent
+    ],
+    description="Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats.",
+    instruction="Greet the user and ask where they are interested in checking the weather."
 )
