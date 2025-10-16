@@ -1,2 +1,2 @@
 google-adk
-aiohttp
+aiohttp>=3.8.0
