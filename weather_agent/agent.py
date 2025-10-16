@@ -3,6 +3,31 @@ from google.adk.agents import SequentialAgent
 from google.adk.tools.google_search_tool import google_search
 import json
 from datetime import datetime
+import aiohttp
+
+
+async def get_weather(latitude: float, longitude: float) -> dict:
+    """Gets the weather forecast for a given latitude and longitude."""
+    async with aiohttp.ClientSession() as session:
+        headers = {'User-Agent': '(my-weather-app, my-email@example.com)'}
+        points_url = f"https://api.weather.gov/points/{latitude},{longitude}"
+        
+        async with session.get(points_url, headers=headers) as points_response:
+            points_response.raise_for_status()
+            points_data = await points_response.json()
+            forecast_url = points_data.get("properties", {}).get("forecast")
+
+            if forecast_url:
+                async with session.get(forecast_url, headers=headers) as forecast_response:
+                    forecast_response.raise_for_status()
+                    return await forecast_response.json()
+            return {"error": "Could not retrieve forecast URL."}
+
+
+async def get_latitude_longitude(location: str):
+    """Gets the latitude and longitude for a given location"""
+    return 37.2882,-121.8492
+
 
 # Root Agent - Query Parser & Coordinator
 query_parser_agent = Agent(
@@ -173,45 +198,13 @@ Return results in a structured format that can be used by the Forecast and Insig
 forecast_agent = Agent(
     model='gemini-2.0-flash-exp',
     name='forecast_agent',
-    description='Fetches real-time weather conditions, forecasts, and active warnings from NWS and NOAA APIs.',
-    instruction="""You are the Forecast Agent in the weather readiness framework. Your role is to retrieve current weather conditions, forecasts, and active alerts.
-
-## DATA SOURCES
-
-1. **National Weather Service (NWS) API**
-   - Current weather conditions
-   - Forecast discussions and predictions
-   - Active watches, warnings, and advisories
-   - Hazardous weather outlooks
-
-2. **NOAA Products**
-   - Hurricane track forecasts and cone of uncertainty
-   - Severe weather probabilities
-   - Precipitation forecasts
-   - Temperature forecasts and heat index
-
-## YOUR TASKS
-
-1. Receive the structured query from the Query Parser Agent
-2. Based on location coordinates and weather event type:
-   - Fetch current conditions for the area
-   - Retrieve relevant forecast data based on `temporal.forecast_horizon`
-   - Get active warnings/watches that match the weather event type
-   - Pull forecast discussions for context
-3. Interpret forecast confidence and uncertainty
-4. Identify timing of peak impacts (when will conditions be most severe)
+    description='Fetches real-time weather conditions, forecasts, and active warnings from NWS API.',
+    instruction="""You are the Forecast Agent. Your primary role is to help with mapping, directions, and finding places. If the user asks for the weather, use the latitude and longitude as 37.2882,-121.8492, and then delegate to the weather_agent to get the forecast.
 
 ## OUTPUT FORMAT
-
-Provide:
-- Current conditions summary
-- Forecast summary with timing of key events
-- Active alerts and their severity levels
-- Forecast confidence and uncertainty ranges
-- Expected impacts based on predicted conditions
-
 Return results in a structured format for the Insights Agent to synthesize.
-"""
+""",
+tools=[ get_weather, get_latitude_longitude],
 )
 
 # Insights Agent - Synthesis and Recommendations
