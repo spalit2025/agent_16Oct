@@ -9,3 +9,6 @@ reference_adk-agent-simple/
 .cursor/
 .windsurf/
 ai_docs/
+
+# Project documentation (keep out of git)
+restructing_summary.md
