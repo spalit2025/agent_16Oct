@@ -10,9 +10,13 @@ import logging
 import google.cloud.logging
 cloud_logging_client = google.cloud.logging.Client()
 cloud_logging_client.setup_logging()
-
-
+from google.adk.agents import LlmAgent
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset, \
+                StdioServerParameters, StdioConnectionParams
+import os
 import aiohttp
+google_maps_api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+
 def log_query_to_model(callback_context: CallbackContext, llm_request: LlmRequest):
     if llm_request.contents and llm_request.contents[-1].role == 'user':
         for part in llm_request.contents[-1].parts:
@@ -49,12 +53,6 @@ async def get_weather(latitude: float, longitude: float) -> dict:
                         return await forecast_response.json()
                 return {"error": "Could not retrieve forecast URL."}
 
-
-async def get_latitude_longitude(location: str):
-    """Gets the latitude and longitude for a given location"""
-    return 37.2882,-121.8492
-
-
 # Root Agent - Query Parser & Coordinator
 query_parser_agent = Agent(
     model='gemini-2.0-flash-exp',
@@ -84,6 +82,101 @@ Parse the query and generate a JSON object with:
 Output format:
 Processing your request...
 [JSON structure here - for internal use only]
+=======
+
+## OPERATIONAL PRINCIPLES
+
+- Only use information explicitly stated in the user query
+- Mark uncertain fields as null or flag for clarification
+- Never invent coordinates, place_ids, or data availability
+- If location is ambiguous, request clarification
+- Map user descriptions to standardized NWS/NOAA event types
+- Distinguish between "current conditions," "forecast," and "historical analysis"
+- Automatically determine which data sources are needed based on query intent
+
+## OUTPUT SCHEMA
+
+Return a JSON object with this structure to the subagents:
+{
+  "query_id": "unique-identifier",
+  "timestamp": "ISO-8601-datetime",
+  "parsed_query": {
+    "original_query": "user's exact question",
+    "intent": "threat_assessment | preparedness_check | historical_analysis | forecast_request",
+    "confidence": 0.0-1.0
+  },
+  "location": {
+    "primary": {
+      "name": "City, State, Country",
+      "coordinates": {"latitude": 0.0, "longitude": 0.0},
+      "administrative_levels": {
+        "locality": "city-name",
+        "admin_level_1": "state/province",
+        "admin_level_2": "county",
+        "country": "country-code"
+      }
+    }
+  },
+  "weather_event": {
+    "type": "hurricane | flood | heat_wave | tornado | winter_storm | drought | wildfire | severe_thunderstorm",
+    "severity_mentioned": "category/intensity if specified",
+    "specific_characteristics": []
+  },
+  "temporal": {
+    "timeframe_type": "current | forecast | historical | comparison",
+    "forecast_horizon": "24h | 48h | 72h | 7days | null",
+    "historical_lookback": "1year | 5years | 10years | null"
+  },
+  "vulnerable_populations": {
+    "mentioned": boolean,
+    "types": ["elderly", "children", "low-income", "disabled", "homeless", "chronic-illness"],
+    "require_census_data": boolean
+  },
+  "infrastructure_concerns": {
+    "mentioned": boolean,
+    "types": ["hospitals", "schools", "shelters", "power-grid", "water-treatment", "evacuation-routes"],
+    "require_mapping": boolean
+  },
+  "data_requirements": {
+    "historical_data": {
+      "needed": boolean,
+      "types": []
+    },
+    "forecast_data": {
+      "needed": boolean,
+      "sources": ["NWS", "NOAA"],
+      "products": []
+    },
+    "census_data": {
+      "needed": boolean,
+      "demographics": boolean
+    },
+    "geospatial_data": {
+      "needed": boolean,
+      "poi_types": []
+    }
+  },
+  "analysis_objectives": {
+    "compare_historical": boolean,
+    "assess_current_risk": boolean,
+    "forecast_impact": boolean,
+    "identify_vulnerabilities": boolean,
+    "recommend_actions": boolean
+  },
+  "output_preferences": {
+    "target_audience": "emergency-managers | community-leaders | general-public",
+    "urgency_level": "immediate | high | moderate | routine",
+    "format": "executive-summary | detailed-report | alert | briefing"
+  },
+  "validation": {
+    "location_validated": boolean,
+    "weather_event_recognized": boolean,
+    "sufficient_context": boolean,
+    "ready_for_delegation": boolean
+  }
+}
+Pass the relevant information to the next agent.
+>>>>>>> bc05b48 (remove hardcoding)
 """
 )
 
@@ -111,33 +204,35 @@ data_agent = Agent(
 - Historical comparisons requested
 - Vulnerable population analysis needed
 - Infrastructure risk assessment needed
-
+=
 Keep responses brief and data-focused.
 """
 )
+# Google Search Agent - for additional web-based information
+google_search_agent = Agent(
+    model='gemini-2.0-flash-exp',
+    name='google_search_agent',
+    description='A helpful assistant for user questions that require searching the web.',
+    instruction="answer the user's question using the google search tool",
+    tools=[google_search],
+    before_model_callback=log_query_to_model,
+    after_model_callback=log_model_response,
+)
 
 # Forecast Agent - Real-time Weather Data
-forecast_agent = Agent(
+forecast_agent = LlmAgent(
     model='gemini-2.0-flash-exp',
     name='forecast_agent',
     before_model_callback=log_query_to_model,
     after_model_callback=log_model_response,
-    description='Fetches real-time weather conditions and forecasts from NWS API.',
-    instruction="""You are the Forecast Agent. Use the weather tools to get current forecasts.
-
-## YOUR TASKS
-1. Use get_latitude_longitude() to get coordinates for the location
-2. Use get_weather() with those coordinates to fetch the forecast
-3. Extract and summarize the relevant forecast information
-4. Focus on what the user asked about (rain, temperature, severe weather, etc.)
+    description='Fetches real-time weather conditions, forecasts, and active warnings from NWS API.',
+    instruction="""You are the Forecast Agent. Your primary role is to help with mapping, directions, and finding places. If the user asks for the weather, use the latitude and longitude from google_search_agent to get the latitude and longitude, and then delegate to the get_weather to get the forecast.
 
 ## OUTPUT FORMAT
-Provide a clear, concise forecast summary focusing on the user's specific question.
-Do NOT output raw JSON or overly technical data to the user.
-
-Example: "The 7-day forecast for San Jose shows mostly sunny conditions with highs in the mid-70s. There is minimal chance of rain throughout the week (0-2% chance)."
+Pass results in a structured format to the Insights Agent to synthesize.
 """,
-    tools=[get_weather, get_latitude_longitude],
+tools=[ get_weather],
+    sub_agents=[google_search_agent]
 )
 
 # Insights Agent - Synthesis and Recommendations
@@ -179,25 +274,6 @@ Read the output_preferences from Query Parser to determine response style.
 """
 )
 
-# Google Search Agent - for additional web-based information
-google_search_agent = Agent(
-    model='gemini-2.0-flash-exp',
-    name='google_search_agent',
-    description='Searches the web for additional information when needed.',
-    instruction="""You are the Google Search Agent. Only provide additional information if:
-- The previous agents couldn't answer the question
-- Additional context is specifically requested
-- Current information needs web verification
-
-Otherwise, respond with: "No additional information needed."
-
-Use the google_search tool only when necessary.
-""",
-    tools=[google_search],
-    before_model_callback=log_query_to_model,
-    after_model_callback=log_model_response,
-)
-
 # Root Agent - Sequential Coordinator
 root_agent = SequentialAgent(
     name="root_agent",
@@ -205,8 +281,25 @@ root_agent = SequentialAgent(
         query_parser_agent,
         data_agent,
         forecast_agent,
-        insights_agent,
-        google_search_agent
+        insights_agent
     ],
-    description="You are a helpful assistant. Weather Readiness Multi-Agent System: Coordinates query parsing, data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats. Don't return intermediate response."
+
+    
+    description="You are a helpful assistant. Greet the user and then ask what they would like to know. Once you get more information related to weather, use the tools and the subagents for data retrieval, forecast analysis, and actionable insights generation for community decision-makers facing weather threats. Dont return intermediate response"
 )
+
+'''MCPToolset(
+    connection_params=StdioConnectionParams(
+        server_params=StdioServerParameters(
+            command='npx',
+            args=[
+                "-y",
+                "@modelcontextprotocol/server-google-maps",
+            ],
+            env={
+                "GOOGLE_MAPS_API_KEY": google_maps_api_key
+            }
+        ),
+        timeout=15,
+        ),
+    )'''
