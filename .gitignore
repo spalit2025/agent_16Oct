@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Reference sample project (keep out of git)
+reference_adk-agent-simple/
+
+# AI documentation and IDE config (keep out of git)
+.claude/
+.cursor/
+.windsurf/
+ai_docs/
